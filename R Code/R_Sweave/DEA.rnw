@@ -1,0 +1,896 @@
+\documentclass[12pt,]{article}
+\usepackage[superscript,nomove]{cite} % use if \cite is used and superscripts wanted
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper, margin=1.2in]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{lscape}
+\usepackage{bbm}
+\usepackage{mathrsfs}
+\usepackage{amssymb}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{listings}
+\usepackage{color} %red, green, blue, yellow, cyan, magenta, black, white
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{rotating}
+\usepackage{fancyhdr}          % this and next line are for fancy headers/footers
+\pagestyle{fancy}
+
+\usepackage{Sweavel}
+\SweaveOpts{keep.source=TRUE}
+% To produce both postscript and pdf graphics, remove the eps and pdf
+% parameters in the next line.  Set default plot size to 6x4 in.
+\SweaveOpts{eps = FALSE, pdf = TRUE}
+%\SweaveOpts{width=8, height=6}
+
+
+
+\begin{document}
+\begin{titlepage}
+\begin{center}
+
+\vspace*{5em}
+{\huge A Production Efficiency Analysis of Farms using the DEA Approach\\[0.4cm] }
+\color{blue}\hrule
+\color{black}
+\vspace{100mm}
+\noindent
+\Large Jiachuan \textsc{Tian}
+
+\today
+\vfill
+\end{center}
+\end{titlepage}
+
+
+%--------------------------------
+\section{Data Desciption}
+%--------------------------------
+
+
+In this note, we present an analysis of farms' production efficiencies using the DEA approach. The data we use is monthly data of a set of farms. We first checked the number of farms and the number of variates.
+<<Load libraries, echo=FALSE>>=
+library(xlsx)
+library(Benchmarking)
+library(knitr)
+library(ggplot2)
+library(xtable)
+library(dplyr)
+library(magrittr)
+library(censReg)
+@
+
+<<Read-Data>>=
+data = read.xlsx(file = 'Monthly.xlsx', 1)
+data$Farm_ID = factor(data$Farm_ID)  #Change Farm_ID to Factor
+
+data %<>%
+  dplyr::distinct() %>%
+  group_by(Farm_ID) %>%
+  arrange(DHIDate)
+dim(data)
+length(unique(data$Farm_ID))
+@
+Thus we have 53 farms, 36 variates for each farm. We have a total number of 2346 observations. We suspect there may be some missing values in the data.
+<<Check missing Value, results=tex>>=
+missing_fn = function(col_index){
+  return(sum(is.na(data[,col_index])))
+}
+result = sapply(1:dim(data)[2], function(x) missing_fn(x))
+missing_value = as.data.frame(result)
+missing_value$Var = colnames(data)
+colnames(missing_value)[1] = "Number of Available Observations"
+missing_value = missing_value[, c(2, 1)]
+missing_value[2] = dim(data)[1] - missing_value[2]
+mis_tab = xtable(missing_value,
+                 caption ="Number of Missing Values", 
+                 label = "Table-1")
+align(mis_tab) = "ll|r"
+print(mis_tab, latex.environments = "center", size = .1, 
+      tabular.environment = "longtable")
+@
+
+Data were drawn from 53 farms on a monthly basis for 2013-2015. During some months, each quarter, we sampled feed, manure, and other performance indicators and conducted tests. We call those months, sampled months, and the additional data collected as test data. Of interest is to determine whether the data collected during the sampled months was generated from the same distribution as that collected in the other months.
+
+
+<<Check Every Farm is sampled>>=
+sample = data[!is.na(data$Sample_Number), ]
+length(unique(sample$Farm_ID))
+@
+The number of farm in the (sub)sample is the same as that in data. Thus every farm has been sampled. We are good.
+ 
+%------------------------------
+\section{Heterogeneity Tests}
+%-----------------------------
+We suspect there are heterogeneities in two aspects: (i) sample versus nonsample within each farm; (ii) across farms. We first check for each firm, whether the sampled and nonsampled data are generated from the same distribution for each variates. In particular, we use three nonparametric tests(Kruskal Wallis Test, Kolmogorov-Smirnov Test and Wilcoxon Rank Sum Test) to test  heterogneity.
+
+
+\subsection{Kruskal Wallis Test}
+The null hypothesis of Kruskal Wallis Test is:
+\begin{center}
+$\textbf{\textit{H}}_0$: Two samples tested are generated from the same distribution.
+\end{center}
+The test statistic of Kruskal Wallis test is 
+\begin{align}
+H = (N-1) \frac{\sum_{i = 1}^2 n_i (\bar{r}_i- \bar{r})}{\sum_{i=1}^2 \sum_{j = 1}^{n_i} (r_{ij} - \bar{r})}
+\end{align}
+where $N$ is the total number of observations and $n_i$ is the number of observations in group $i$ for $i = 1, 2$. $r_{ij}$ is the ranking of observation $j$ from group $i$. $\bar{r}_i = \sum_{j = 1}^{n_i} r_{ij} \ n_i$ is the average rank of group $i$. 
+Under the null hypothesis, $H \sim \chi^2_1$. Reject the null hypothesis when $H > \chi^2_{\alpha, 1}$.
+
+Table-2 reports the p-value of Kruskal Wallis test of the sample vs nonsample heterogeneity for each variate within each firm. If the p-value is smaller than 0.05, we conclude there is heterogeneity between sampled data and nonsampled data. Otherwise, we conclude they are generated from the same distribution.
+
+%<<Kruskal Wallis Test, results=tex>>=
+%kruskal_test_fn = function(Farm_ID, col_index, data){
+%  local_sample = data[(!is.na(data$Sample_Number)) & 
+%                        data$Farm_ID == Farm_ID, col_index]
+%  local_nonsample = data[(is.na(data$Sample_Number)) & 
+%                           data$Farm_ID == Farm_ID, col_index]
+%  return(kruskal.test(list(local_sample, local_nonsample))
+%         $p.value)
+%}
+%kruskal_test = outer(
+%  unique(sample$Farm_ID), 
+%  (3:13),
+%  Vectorize(function(x, y) kruskal_test_fn(x, y, data))
+%)
+%kruskal_test = as.data.frame(kruskal_test)
+%colnames(kruskal_test) = colnames(data)[3:13]
+%kruskal_test$Farm_ID = unique(data$Farm_ID)
+%kruskal_test = kruskal_test[,c(12, 1 : 11)]
+%ruskal_tab = xtable(kruskal_test, 
+%                     caption = "Kruskal Wallis Test", 
+%                     label = "Table-2")
+%print(kruskal_tab, latex.environments ="center", size ="small", 
+%      rotate.colnames = TRUE, tabular.environment = "longtable")
+%@
+\textbf{Conclusion}: From table-2, we see almost all p-value are bigger than 0.05. Thus we conclude that the sampled data and nonsampled data are generated from the same distribution.
+
+
+
+\subsection{Kolmogorov-Smirnov Test}
+The null hypothesis of Kolmogorov-Smirnov Test is:
+\begin{center}
+$\textbf{\textit{H}}_0$: Two samples tested are generated from the same distribution.
+\end{center}
+The test statistic of Kolmogorov-Smirnov test is:
+\begin{align}
+D_{n, n'} = \sup_x |F_{1,n}(x) - F_{2,n}(x)|
+\end{align}
+where $n$ and $n'$ are the number of observations of the two samples. $F_{1,n}$ and $F_{2,n'}$ are the empirical distribution functions of the two samples respectively. Reject the null hypothesis at level $\alpha$ if $D_{n, n'} > c(\alpha) \sqrt{\frac{n + n'}{nn'}}$. $C(\alpha)$ can be found in the critical value table.
+
+Table-3 reports the p-value of Kolmogorov-Smirnov Test of the sample vs nonsample heterogeneity for each variate within each firm. If the p-value is smaller than 0.05, we conclude there is heterogeneity between sampled data and nonsampled data. Otherwise, we conclude they are generated from the same distribution.
+
+%<<Kolmogorov-Smirnov Test, results=tex>>=
+%ks_test_fn = function(Farm_ID, col_index, data){
+%  local_sample = data[(!is.na(data$Sample_Number)) &
+%                        data$Farm_ID == Farm_ID, col_index]
+%  local_nonsample = data[(is.na(data$Sample_Number)) &
+%                           data$Farm_ID == Farm_ID, col_index]
+% return(ks.test(local_sample, local_nonsample)$p.value)
+%}
+%ks_test = outer(
+%  unique(sample$Farm_ID), 
+%  (3:13),
+%  Vectorize(function(x, y) ks_test_fn(x, y, data))
+%)
+%ks_test = as.data.frame(ks_test)
+%colnames(ks_test) = colnames(data)[3:13]
+%ks_test$Farm_ID = unique(data$Farm_ID)
+%ks_test = ks_test[,c(12, 1 : 11)]
+%ks_tab = xtable(ks_test, 
+%                caption = "Kolmogorov-Smirnov Test", 
+%                label = "Table-3")
+%print(ks_tab, latex.environments = "center", size =  "small", 
+%      rotate.colnames = TRUE, tabular.environment = "longtable")
+%@
+\textbf{Conclusion}: From table-3, we see almost all p-value are bigger than 0.05. Thus we conclude the same as in Kruskal Wallis test.
+
+
+
+\subsection{Wilcoxon Rank Sum Test}
+The null hypothesis of Wilcoxon Rank Sum Test (equivalently Mann-Whitney test) is:
+\begin{center}
+$\textbf{\textit{H}}_0$: Two samples tested are generated from the same distribution.
+\end{center}
+It is worth noting that wilcoxon rank sum test can only test two samples of the same size. Let $N$ be the sample size. The test statistic of Wilcoxon Rank sum test is:
+\begin{align}
+W = \sum_{i = 1}^{N_r}[sgn(x_{2,i} - x_{1,i}) R_i]
+\end{align}
+where sgn() is the sign function, $x_{1, i}$ and $x_{2, i}$ are observation of the two samples. $N_r$ is the number excluding the pairs with $|x_{2, i} - x_{1, i}| = 0$. Under the null hypothesis, $W$ follows a specific distribution with no simple expression with 0 expectation and variance of $\frac{N_r(N_r + 1)(2N_r + 1)}{6}$. Reject the null hypothesis if $|W| > W_{critical, N_r}$.
+
+
+Table-4 reports the p-value of Wilcoxon Rank Sum test of the sample vs nonsample heterogeneity for each variate within each firm. If the p-value is smaller than 0.05, we conclude there is heterogeneity between sampled data and nonsampled data. Otherwise, we conclude they are generated from the same distribution.
+
+%<<Wilcoxon Rank Sum Test, results=tex>>=
+
+%wilcox_test_fn = function(Farm_ID, col_index, data){
+%  local_sample = data[(!is.na(data$Sample_Number)) &
+%                        data$Farm_ID == Farm_ID, col_index]
+%  local_nonsample = data[(is.na(data$Sample_Number)) &
+%                           data$Farm_ID == Farm_ID, col_index]
+%  return(wilcox.test(local_sample, local_nonsample)$p.value)
+%}
+%wilcox_test = outer(
+%  unique(sample$Farm_ID), 
+%  (3:13),
+%  Vectorize(function(x, y) wilcox_test_fn(x, y, data))
+%)
+%wilcox_test = as.data.frame(wilcox_test)
+%colnames(wilcox_test) = colnames(data)[3:13]
+%wilcox_test$Farm_ID = unique(data$Farm_ID)
+%wilcox_test = wilcox_test[,c(12, 1 : 11)]
+%wilcox_tab = xtable(wilcox_test, 
+%                    caption = "Wilcoxon Rank Sum Test", 
+%                    label = "Table-4")
+%print(wilcox_tab, latex.environments = "center", size =  "small", 
+%      rotate.colnames = TRUE, tabular.environment = "longtable")
+%@
+\textbf{Conclusion}: From table-4, we see almost all p-value are bigger than 0.05. Thus we conclude that the sampled data and nonsampled data are generated from the same distribution.
+
+\subsection{Heterogeneity Test of Farms}
+In this section we examine the herterogeneity of number of milk cows across farms. In particular, we use Kruskal Wallis test to test such heterogeneity.
+
+<<Heterog across farms>>=
+kruskal.test(data$X__Cows ~ data$Farm_ID)               
+@
+The p-value is very small. Thus we conclude there is heterogeneity across farms. Figure-1 visualizes the heterogeneity of number of milk cows across farms. 
+
+<<Heterog across farms 2>>=
+kruskal.test(data$Milk_per_Milk_Cow ~ data$Farm_ID)
+@
+
+\begin{figure}[h]
+<<Hetero, fig=TRUE, height= 5, width=5, echo=FALSE>>=
+#ggplot(data = data, aes(x = X__Cows, fill = Farm_ID))+
+#geom_histogram(binwidth = 17)+
+#xlab('Number of Cows') +
+#ylab('Count') +
+#ggtitle('Number of Cows by Farm ID')+
+#labs(colour = "Farm ID")
+heter_plot = 
+data%>% 
+  group_by(Farm_ID)%>%
+  summarise(mean(X__Cows))
+colnames(heter_plot)[2] = "Mean_X__Cows"
+ggplot(heter_plot, aes(Mean_X__Cows))+
+  geom_histogram()
+
+heter_plot2 =
+  data %>%
+    group_by(Farm_ID)%>%
+    summarise((mean(Milk_per_Milk_Cow)))
+
+colnames(heter_plot2)[2] = "Milk_per_milk_cow"
+ggplot(heter_plot2, aes(Milk_per_milk_cow))+
+  geom_histogram()
+@
+\caption{Number of Cows by Farm ID}
+\end{figure}
+
+
+\newpage
+%--------------------------
+\section{DEA}
+%--------------------------
+\subsection{Model 1: Single Input, Single Output DEA on Monthly Data}
+
+In this section, we examine the production efficieny of farms. We caculate three input efficiency scores with number of milk cows as input, and milk per milk cow,  fat, pro as outputs respectively. The milk per milk cow efficiency is reported as follows:
+
+<<DEA, echo=FALSE>>=
+dea_Milk = dea(data$X__Cows, data$Milk_per_Milk_Cow)
+dea_fat = dea(data$X__Cows, data$X__Fat)
+dea_pro = dea(data$X__Cows, data$X__Pro)
+eff = cbind(dea_Milk$eff, dea_fat$eff, dea_pro$eff)
+eff = as.data.frame(eff)
+colnames(eff) = colnames(data)[7:9]
+eff$Farm_ID = data$Farm_ID
+eff$X__Cows = data$X__Cows
+eff = eff[,c(4,1,2,3, 5)]
+@
+
+<<DEA1>>=
+summary(dea_Milk)
+@
+
+\begin{figure}[h]
+<<DEA_1, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+c = ggplot(as.data.frame(dea_Milk$eff), aes(dea_Milk$eff))
+c + geom_histogram() + xlab("Number of Cows") +
+ylab('Efficiency Score') +
+ggtitle('Efficiency Score of Model 1 (Output Milk)')
+@
+\end{figure}
+
+
+
+The milk fat production efficiencies can be summarized as follows:
+<<DEA2>>=
+summary(dea_pro)
+@
+
+\begin{figure}[h]
+<<DEA_2, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+c = ggplot(as.data.frame(dea_pro$eff), aes(dea_pro$eff))
+c + geom_histogram() + xlab("Number of Cows") +
+ylab('Efficiency Score') +
+ggtitle('Efficiency Score of Model 1 (Output Pro)')
+@
+\end{figure}
+
+And the milk protein efficiencies can be summarized  as follows:
+<<DEA3>>=
+summary(dea_fat)
+@
+
+\begin{figure}[h]
+<<DEA_3, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+c = ggplot(as.data.frame(dea_fat$eff), aes(dea_fat$eff))
+c + geom_histogram() + xlab('Efficiency Score') +
+ylab('Count') +
+ggtitle('Efficiency Score of Model 1 (Output Fat)')
+@
+\end{figure}
+
+
+Figure 2 plots the milk per milk cow production efficiency frontier of farms.
+
+\begin{figure}[h]
+<<Milk_Frontier, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+ggplot(data, aes(X__Milk_Cows, Milk_per_Milk_Cow , colour = Farm_ID))+ 
+geom_point(size = .5)+
+ylim(10, 100)+
+geom_segment(aes(x = 25, y = 10 , xend = 25, yend = 60),
+             size = .3, color = 4, linetype="dashed")+
+geom_segment(aes(x = 25, y = 60 , xend = 25, yend = 71),
+             size = .3, color = 4)+
+geom_segment(aes(x = 25, y = 71, xend = 27, yend = 84),
+             size = .3, color = 4)+
+geom_segment(aes(x = 27, y = 84, xend = 36, yend = 94),
+             size = .3, color = 4)+
+geom_segment(aes(x = 36, y = 94, xend = 106, yend = 98),
+             size = .3, color = 4)+
+geom_segment(aes(x = 106, y = 98, xend = 145, yend = 99),
+             size = .3, color = 4)+
+geom_segment(aes(x = 145, y = 99, xend = 429, yend = 100),
+             size = .3, color = 4)+
+geom_segment(aes(x = 429, y = 100, xend = 1200, yend = 100),
+             size = .3, color = 4, linetype = "dashed")+
+xlab('Number of Milk Cows') +
+ylab('Milk per Milk Cow (lbs)') +
+ggtitle('Efficient Frontier of Milk per Milk Cow (lbs)')+
+labs(colour = "Farm ID")
+@
+\caption{Efficient Frontier of Milk per Milk Cow (lbs)}
+\end{figure}
+
+Figure 3 plots the milk fat production efficiency frontier of farms.
+
+\begin{figure}[h]
+<<Fat_Frontier, fig=TRUE, height= 5, width=7 ,echo = F>>=
+ggplot(data, aes(X__Milk_Cows, X__Fat, colour = Farm_ID))+ 
+geom_point(size = .5)+
+ylim(1, 5.5)+  
+geom_segment(aes(x = 25, y = 1, xend = 25, yend = 3.6),
+             size = .3, color = 4, linetype = "dashed")+
+geom_segment(aes(x = 25, y = 3.6, xend = 25, yend = 4.0),
+             size = .3, color = 4)+
+geom_segment(aes(x = 25, y = 4.0, xend = 28, yend = 4.4),
+             size = .3, color = 4)+
+geom_segment(aes(x = 28, y = 4.4, xend = 31, yend = 4.5),
+             size = .3, color = 4)+
+geom_segment(aes(x = 31, y = 4.5, xend = 69, yend = 5.4),
+             size = .3, color = 4)+
+geom_segment(aes(x = 69, y = 5.4, xend = 1200, yend = 5.4),
+             size = .3, color = 4, linetype = "dashed")+
+xlab('Number of Milk Cows') +
+ylab('Fat (%)') +
+ggtitle('Milk Fat (%) Production Efficiency Frontier')+
+labs(colour = "Farm ID")
+@
+\caption{Milk Fat Production Efficiency Frontier}
+\end{figure}
+
+\newpage
+Figure 4 plots the milk protein production efficiency frontier of farms.
+\begin{figure}[h]
+<<Pro_Frontier, fig=TRUE, height = 5, width = 7, echo = F>>=
+ggplot(data, aes(X__Milk_Cows, X__Pro, colour = Farm_ID))+ 
+geom_point(size = .5)+
+ylim(2, 3.6)+  
+geom_segment(aes(x = 25, y = 2, xend = 25, yend = 2.9),
+             size = .3, color = 4, linetype = "dashed")+
+geom_segment(aes(x = 25, y = 2.9, xend = 25, yend = 3.2),
+             size = .3, color = 4)+
+geom_segment(aes(x = 25, y = 3.2, xend = 26, yend = 3.3),
+             size = .3, color = 4)+
+geom_segment(aes(x = 26, y = 3.3, xend = 41, yend = 3.6),
+             size = .3, color = 4)+
+geom_segment(aes(x = 41, y = 3.6, xend = 1200, yend = 3.6),
+             size = .3, color = 4, linetype = "dashed")+
+xlab('Number of Milk Cows') +
+ylab('Protein (%)') +
+ggtitle('Milk Protein (%) Production Efficiency Frontier')+
+labs(colour = "Farm ID")
+@
+\caption{Milk Protein Production Efficiency Frontier}
+\end{figure}
+
+
+
+
+%---------------------------------------------------------------------------------------------------
+\newpage
+\subsection{Model 2: Multiple Inputs and Outputs DEA on Monthly and Test Data}
+%---------------------------------------------------------------------------------------------------
+\subsubsection{Model 2-1 DEA of Whole Sample with augmented data}
+Next, we add the test data collected. We assume that the test value hold for all months following a test date. Test dates were during Fall and Spring for 2014 and 2015. We specify the production of milk to be a function of the number of milk cows, Dry Matter, CP\%, NDF\% DM, Starch \%DM, Starch Digestibility, NDF Digest, and pH (i.e. inputs of the model). To measure the milk production output, we choose milk (lbs) per milk cow, fat, pro, (negative) MUN and (negative) fecal starch the output vairables. The DEA results can be summarised as follows:
+
+<<test data, echo =F>>=
+#--------------------------------------------
+#Fill missing value by hand in excel
+#--------------------------------------------
+data_new_1 = read.xlsx(file = "data_new1.xlsx", 1, stringsAsFactors = FALSE)
+data_good = data_new_1
+data_good$pH[is.na(data_good$pH)] = mean(data_good$pH[!is.na(data_good$pH)])
+data_good$NDF_Digestibility[is.na(data_good$NDF_Digestibility)] = 
+  mean(data_good$NDF_Digestibility[!is.na(data_good$NDF_Digestibility)])
+@
+
+<<DEA_model2>>= 
+Inputs_model2 = c("X__Milk_Cows", 
+                  "Dry_Matter", 
+                  "CP__", 
+                  "NDF___DM", 
+                  "Starch___DM", 
+                  "pH")
+Outputs_model2_1 = c("Milk_per_Milk_Cow",
+                   "X__Fat",
+                   "X__Pro")
+Outputs_model2_2 = c("Fecal_Starch",
+                     "MUN")
+dea_model2_all = dea(data_good[,Inputs_model2],
+                 cbind(data_good[,Outputs_model2_1], -data_good[,Outputs_model2_2]))
+summary(dea_model2_all)
+@
+
+\subsubsection{Model 2-2 DEA of Whole Sample with original test data}
+
+<<Original Test Data, echo= F>>=
+#on test data
+Test_data = 
+  data %>%
+  dplyr::filter(!is.na(Sample_Number))%>%
+  group_by(Farm_ID)
+
+Test_data$pH[is.na(Test_data$pH)] = mean(Test_data$pH[!is.na(Test_data$pH)])
+Test_data$MUN[is.na(Test_data$MUN)] = mean(Test_data$MUN[!is.na(Test_data$MUN)])
+missing_value2 = 
+  Test_data%>%
+  ungroup%>%
+  summarise_each(funs(sum(is.na(.))))
+
+
+Test_data = as.data.frame(Test_data)
+@
+
+<< >>=
+dea_model2_test = dea(Test_data[,Inputs_model2],
+                      cbind(Test_data[,Outputs_model2_1], -Test_data[,Outputs_model2_2]))
+summary(dea_model2_test)
+
+summary(dea(Test_data[,Inputs_model2], -Test_data[,Outputs_model2_2[1]]))
+summary(dea(Test_data[,Inputs_model2], -Test_data[,Outputs_model2_2[2]]))
+@
+
+%Figure 5 shows the plot of model 2 with 2303 observations.
+%\begin{figure}[h]
+%<<DEA_21, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+%c = ggplot(as.data.frame(dea_model2_all$eff), aes(dea_model2_all$eff))
+%c + geom_histogram()  + xlab('Efficiency Score') +
+%ylab('Count') +
+%ggtitle('Efficiency Score of Model 2 (2303 obs)')
+%@
+%\caption{Efficiency Score of Model 2 (2303 obs)}
+%\end{figure}
+
+Figure 5 shows the plot of model 2 with 160 observations.
+\begin{figure}[h]
+<<DEA_22, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+d = ggplot(as.data.frame(dea_model2_test$eff), aes(dea_model2_test$eff))
+d + geom_histogram()  + xlab('Efficiency Score') +
+ylab('Count') +
+ggtitle('Efficiency Score of Model 2 (160 obs)')
+@
+\caption{Efficiency Score of Model 2 (160 obs)}
+\end{figure}
+
+Model 2-1 and 2-2 show that with a relatively large number of inputs, all firms have high efficiency score. 
+
+
+\subsubsection{Model 2-3 DEA of Different Partition of Sample}
+From section 1, we conclude there is herterogeneity across different scale of farms. We suspect such herterogeneity will affect the efficiency of DEA analysis. Thus in this section, we partition the whole sample into different subsamples over the number of cows, and do DEA in each subsample. In each subsample, since we have less observations, with consideratin of degree freedom, we only choose some major input variates (Dry matter, CP\%, Starch \%DM, pH). We first plot histrogam of number of cows in the test data.
+
+\begin{figure}[h]
+<<Plot1, fig=TRUE, height= 5, width=7>>=
+ggplot(Test_data, aes(X__Cows))+
+  geom_histogram()
+@
+\caption{Histogram of number of cows (162 obs)}
+\end{figure}
+
+Now we partition data according to number of cows. The thresolds we chose are 100, 275, 400, 550.
+\begin{figure}[h]
+<<partition_data, fig = TRUE, height= 5, width =7>>=
+Test_data1= Test_data
+Test_data1%<>%
+  #group_by(., X__Cows = cut(X__Cows, breaks = c(0, 100, 275, 400, 550, 725, 1000, 2000)))
+    group_by(., X__Cows = cut(X__Cows, breaks = c(0, 100, 275, 400, 550, 2000)))
+ggplot(Test_data1, aes(Dry_Matter, Milk_per_Milk_Cow, color = X__Cows))+
+  geom_point()
+@
+\end{figure}
+
+
+For each subsample, do the DEA. 
+<<DEA for each subsample,echo = T, error =T >>=
+try_out = try(
+Test_data1%>%
+  do({
+   summary(dea(as.data.frame(
+                  select(., Dry_Matter, 
+                  CP__, 
+                  Starch___DM, 
+                  pH)), 
+               as.data.frame(
+                 select(., Milk_per_Milk_Cow,
+                        X__Fat,
+                        X__Fat
+                   ))
+                 ))
+  })
+)
+#cat(try_out)
+@
+
+We plot these result withdry matter as x-axis and milk per milk c ow as y-axis
+\begin{figure}[h]
+<<Plot_Model_23, fig = TRUE, height= 5, width =7>>=
+eff_partition = 
+Test_data1%>%
+  do({
+   data.frame(dea(as.data.frame(
+                  select(., Dry_Matter, 
+                  CP__, 
+                  Starch___DM, 
+                  pH)), 
+               as.data.frame(
+                 select(., Milk_per_Milk_Cow,
+                        X__Fat,
+                        X__Fat
+                   ))
+                 )$eff)
+  })
+colnames(eff_partition)[2] = "Efficiency"
+ggplot(eff_partition, aes(Efficiency, fill = X__Cows))+
+  geom_histogram(position = "stack")
+@
+\caption{Histogram of Efficiency by Group}
+\end{figure}
+
+%-----------------------------------------------------------------
+\subsection{Model 3: DEA with Aggregation of Annual Data}
+%-----------------------------------------------------------------
+To integrate the year data of these farms, we merge the monthly data and annual data by Farm ID and year.
+<<Merge>>=
+data_year = read.xlsx(file = "Annual.xlsx", 3)
+data_year$Farm_ID = factor(data_year$Farm_ID)
+data_new = merge(data, data_year, by = c("Farm_ID", "year"),
+                 all.x = T)
+dim(data_new)
+@
+We see we added in 34 variates. To check we are not losing any observations, we have
+<<Check Obs>>=
+sum(data_new$Farm_ID == data$Farm_ID)
+@
+Thus we did not lose any observation. To check the number of missing values in each variate, we have
+<<echo =F>>=
+missing_fn = function(col_index){
+  return(sum(is.na(data_new[,col_index])))
+}
+@
+
+<<results = tex >>=
+result = sapply(1:dim(data_new)[2], function(x) missing_fn(x))
+missing_value_new = as.data.frame(result)
+missing_value_new$Var = colnames(data_new)
+colnames(missing_value_new)[1] = "Number_of_Missing_Values"
+missing_value_new = missing_value_new[, c(2, 1)]
+missing_tab1 = xtable(missing_value_new, 
+                    caption = "Number of Missing Values (Annual)",
+                    label = "Table-5")
+print(missing_tab1, latex.environments = "center", size = "small", 
+      tabular.environment = "longtable")
+@
+
+
+\subsubsection{Model 3-1 Annual Data Variables as Inputs}
+
+To analyze production efficiency, we would like to use purchased feed, corn silage, crop cost and number of milk cows as inputs, and milk (lbs) per milk cow as output. We see there are some missing values in the input variates. In this case, we only use those oberservations with no missing values (otherwise, the efficiency score goes to infinity).
+<<>>=
+data_new_no_missing = data_new[!(is.na(data_new$Pur_Feed_Calc) |
+                                is.na(data_new$Corn_silage) |
+                                is.na(data_new$Crop_Cost_Calc)), ] 
+
+@
+Now we do DEA using this new data with no missing values.
+<<>>=
+dea_four_input = dea(cbind(data_new_no_missing$X__Milk_Cows, 
+                           data_new_no_missing$Pur_Feed_Calc,
+                           data_new_no_missing$Corn_silage, 
+                           data_new_no_missing$Crop_Cost_Calc), 
+                     matrix(data_new_no_missing$Milk_per_Milk_Cow))
+summary(dea_four_input)
+@
+We see there 114 observations with production efficiency 1. For visualization, since there are four inputs and one output, we aggregate the inputs as X by summation (same as the R function \textit{dea.plot} does)\footnote{This is only for visualization purpose.}. Figure 5 shows the result. Observation with efficiency 1 (on the production efficiency frontier) are marked by crossmarks.
+<<echo =F>>=
+eff_four_input = data_new_no_missing[dea_four_input$eff == 1, ]
+x = data_new_no_missing$X__Milk_Cows +
+    data_new_no_missing$Pur_Feed_Calc +
+    data_new_no_missing$Corn_silage +
+    data_new_no_missing$Crop_Cost_Calc
+
+x_eff = eff_four_input$X__Milk_Cows+
+        eff_four_input$Pur_Feed_Calc+
+        eff_four_input$Corn_silage+
+        eff_four_input$Crop_Cost_Calc
+@
+
+\begin{figure}[h]
+<<Four_Input_DEA, fig = T, height = 5, width = 7, echo = F>>=
+ggplot(data_new_no_missing, aes(x = x, y = Milk_per_Milk_Cow, 
+                                colour = Farm_ID))+
+geom_point(size = .5)+ ylim(0, 100)+
+geom_point(data = eff_four_input, 
+           aes(x = x_eff, y = Milk_per_Milk_Cow),
+           size = 1, shape = 3, stroke = 1)+
+xlab('X - Aggregation of Four Inputs (Only for plot purpose') +
+ylab('Milk per Milk Cow') +
+ggtitle('Milk (lbs) per Milk Cow Production Efficiency Frontier')+
+  labs(colour = "Farm ID")
+@
+\caption{Milk per Milk Cow Production Efficiency Frontier}
+\end{figure}
+
+
+We also conducted DEA of multiple inputs and multiple outputs model. Inputs are the number of milk cows, Dry Matter, CP\%, NDF\% DM, Starch \%DM, Starch Digestibility, NDF Digest, pH (i.e. inputs of the model), Dairy IOFC Surplus Group, Crop Cost, Pur Feed, Feed Cost, and Corn silage. The output variates are milk (lbs) per milk cow, fat, pro, (negative) MUN and (negative) fecal starch. The DEA results can be summarised as follows:
+<<>>=
+Inputs_model3 = c(Inputs_model2,
+                  "Dairy_IOFC_Surplus_Group",
+                  "Crop_Cost_Calc",
+                  "Pur_Feed_Calc",
+                  "Feed_Cost__All_Animals__Annual",
+                  "Corn_silage"
+                  )
+@
+
+<<echo = F>>=
+data_model3 = merge(Test_data, data_year, by = c("Farm_ID", "year"),
+                   all.x = T)
+missing_value3 =
+  data_model3%>%
+  summarise_each(funs(sum(is.na(.))))
+
+data_model3 %<>%
+  filter(!(is.na(Dairy_IOFC_Surplus_Group) |
+           is.na(Crop_Cost_Calc) |
+           is.na(Pur_Feed_Calc) |
+            is.na(Feed_Cost__All_Animals__Annual) |
+             is.na(Corn_silage))
+         )
+
+dea_model3 = dea(data_model3[,Inputs_model2],
+                cbind(data_model3[,Outputs_model2_1], -data_model3[,Outputs_model2_2]))
+summary(dea_model3)
+
+@
+
+
+\begin{figure}[h]
+<<DEA_22, fig=TRUE, height= 5, width=7, echo=FALSE>>=
+c = ggplot(as.data.frame(dea_model3$eff), aes(dea_model3$eff))
+c + geom_histogram() + xlab('Efficiency Score') +
+ylab('Count') +
+ggtitle('Efficiency Score of Model 3')
+@
+\end{figure}
+
+The result resemables that of model 2. Every observation has a high efficiency score. This says in the DEA with (relatively) large number of input, almost every firm is efficient.
+
+
+\subsubsection{Model 3-2 Two-Step DEA on the Whole Annual Data}
+\textbf{Step 1}: For the whole data, we estimate efficiency score using DEA.
+<<>>=
+Inputs_model32 = c("X__Milk_Cows", 
+                  "Dry_Matter", 
+                  "CP__", 
+                  "Starch___DM", 
+                  "pH")
+Outputs_model32 = c("Milk_per_Milk_Cow",
+                   "X__Fat",
+                   "X__Pro")
+dea321 = dea(data_model3[,Inputs_model32],
+                 data_model3[,Outputs_model32[1]])
+summary(dea321)
+
+dea322 = dea(data_model3[,Inputs_model32],
+                 data_model3[,Outputs_model32[2]])
+
+summary(dea322)
+
+
+dea323 = dea(data_model3[,Inputs_model32],
+                 data_model3[,Outputs_model32[3]])
+
+summary(dea323)
+@
+
+\textbf{Step 2}: We run a tobit regression of efficiency score on four annual variates (daily IOFC Surplus Group, Crop Cost, Purchased Feed and Corn Silage). The results are as follows.
+<<>>=
+tobit_1 = censReg(dea321$eff~data_model3$Dairy_IOFC_Surplus_Group +
+                  data_model3$Crop_Cost_Calc+
+                  data_model3$Pur_Feed_Calc+
+                  #data_model3$Feed_Cost__All_Animals__Annual+
+                  data_model3$Corn_silage, right = 1)
+summary(tobit_1)
+
+
+tobit_1 = censReg(dea322$eff~data_model3$Dairy_IOFC_Surplus_Group +
+                  data_model3$Crop_Cost_Calc+
+                  data_model3$Pur_Feed_Calc+
+                  #data_model3$Feed_Cost__All_Animals__Annual+
+                  data_model3$Corn_silage, right = 1)
+summary(tobit_1)
+
+
+tobit_1 = censReg(dea323$eff~data_model3$Dairy_IOFC_Surplus_Group +
+                  data_model3$Crop_Cost_Calc+
+                  data_model3$Pur_Feed_Calc+
+                  #data_model3$Feed_Cost__All_Animals__Annual+
+                  data_model3$Corn_silage, right = 1)
+summary(tobit_1)
+
+@
+
+
+\subsubsection{Model 3-3 Two-Step DEA on partitioned Annual Data}
+
+\textbf{Step 1}: For each group, we estimate efficiency score using DEA. The results are as follows.
+<<DEA for each subsample,echo = T, error =T>>=
+data_model3_1 =data_model3
+data_model3_1%<>%
+  #group_by(., X__Cows = cut(X__Cows, breaks = c(0, 100, 275, 400, 550, 725, 1000, 2000)))
+    group_by(., X__Cows = cut(X__Cows, breaks = c(0, 100, 275, 450, 2000)))
+
+try(data_model3_1%>%
+  do({
+   summary(dea(as.data.frame(
+                  select(., Dry_Matter, 
+                  CP__, 
+                  Starch___DM, 
+                  pH)), 
+               as.data.frame(
+                 select(., Milk_per_Milk_Cow,
+                        X__Fat,
+                        X__Fat
+                   ))
+                 ))
+  }))
+@
+
+Then we attach efficiency scores to the data (by group) and plot them.
+<<>>=
+
+data_model3_1%<>% 
+do({eff =
+data.frame(
+  dea(as.data.frame(
+                  select(., Dry_Matter, 
+                  CP__, 
+                  Starch___DM, 
+                  pH)), 
+               as.data.frame(
+                 select(., Milk_per_Milk_Cow,
+                        X__Fat,
+                        X__Fat
+                   ))
+                 )$eff
+  )
+bind_cols(.,eff)})%>%
+rename(eff = dea.as.data.frame.select....Dry_Matter..CP__..Starch___DM..pH....)
+@
+
+
+\begin{figure}[h]
+<<Plot_Model_33, fig = TRUE, height= 5, width =7>>=
+eff_partition33= 
+data_model3_1%>%
+  do({
+   data.frame(dea(as.data.frame(
+                  select(., Dry_Matter, 
+                  CP__, 
+                  Starch___DM, 
+                  pH)), 
+               as.data.frame(
+                 select(., Milk_per_Milk_Cow
+#                        X__Fat,
+#                        X__Fat
+                   ))
+                 )$eff)
+  })
+colnames(eff_partition33)[2] = "Efficiency"
+ggplot(eff_partition33, aes(Efficiency, fill = X__Cows))+
+  geom_histogram(position = "stack")
+@
+\caption{Histogram of Efficiency of Partitioned Annual Data by Group}
+\end{figure}
+
+\textbf{Step 2}: For each group, we run a tobit regression of efficiency score on four annual variates (daily IOFC Surplus Group, Crop Cost, Purchased Feed and Corn Silage). The results are as follows.
+%<<>>=
+%try(data_model3_1%>%
+%  do({tobit = censReg(eff~Dairy_IOFC_Surplus_Group +
+%                  Crop_Cost_Calc+
+%                  Pur_Feed_Calc+
+%                  #Feed_Cost__All_Animals__Annual+
+%                  Corn_silage, data = .)
+%    summary(tobit)
+%    })
+%
+%)
+@
+<<>>=
+data_model3_1%<>%
+  mutate(index = as.numeric(X__Cows))
+
+for (i in 1:4){
+  local_data = 
+    data_model3_1%>%  
+    filter(index == i)
+  
+    local_tobit = censReg(eff~Dairy_IOFC_Surplus_Group +
+                  Crop_Cost_Calc+
+                  Pur_Feed_Calc+
+                  Corn_silage, data = local_data, right =  1)
+    cat("These are the results for the group", as.character(i))
+    print(summary(local_tobit))
+  }
+
+@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\newpage
+%\section{Appendix}
+%\subsection{Detailed Efficiency Scores in Section 3 (One Input)}
+%
+%<<results= tex>>=
+%eff_tab = xtable(eff,
+%                caption = "Detailed Efficiency 
+%                Scores in Section 3 (One Input)", 
+%                label = "Table-6")
+%print(eff_tab, latex.environments = "center", size =  "small", 
+%     tabular.environment = "longtable")
+%@
+%
+%\subsection{Detailed Efficiency Scores in Section 4 (Four Inputs)}
+%<<results= tex>>=
+%M = as.data.frame(dea_four_input$eff)
+%M$Farm_ID = data_new_no_missing$Farm_ID
+%M = M[,c(2, 1)]
+%eff_tab_four = xtable(M,
+%                caption = "Detailed Efficiency 
+%                Scores in Section 4 (Four Inputs)", 
+%                label = "Table-7")
+%print(eff_tab_four, latex.environments = "center", size =  "small", 
+%     tabular.environment = "longtable")
+%@
+\end{document}

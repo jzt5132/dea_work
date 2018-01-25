@@ -1,0 +1,282 @@
+---
+title: "DEA Final Models Raw Results"
+author: "Jiachuan Tian"
+date: "March 17, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+These are the raw R results of the final model of the DEA work.
+```{r,warning= F, message=FALSE, echo=FALSE}
+library(xlsx)
+library(dplyr)
+library(magrittr)
+library(Benchmarking)
+library(ggplot2)
+library(knitr)
+library(tidyr)
+library(censReg)
+```
+
+# Read and Clean Data
+```{r, echo=FALSE}
+data = read.xlsx(file = 'Monthly.xlsx', 1, stringsAsFactors = FALSE)
+data$MUN = - data$MUN
+data$Fecal_Starch = - data$Fecal_Starch
+
+data_year = read.xlsx(file = "Annual.xlsx", 3)
+data_year$Farm_ID = factor(data_year$Farm_ID)
+
+data = merge(data, data_year, by = c("Farm_ID", "year"), all.x = T)
+data = dplyr::tbl_df(data)
+
+Monthly_data =
+  data%>%
+  dplyr::distinct() %>%
+  group_by(Farm_ID) %>%
+  arrange(DHIDate)
+
+
+Test_data = 
+  Monthly_data %>%
+  dplyr::filter(!is.na(Sample_Number) &
+                !is.na(MUN)&
+                !is.na(pH)  )%>%
+  group_by(Farm_ID)
+
+
+Annual_data = 
+  Test_data %>%
+  dplyr::filter(!is.na(Pur_Feed_Calc) &
+                !is.na(Feed_Cost__All_Animals__Annual) &
+                !is.na(Corn_silage))%>%
+  group_by(Farm_ID)
+
+Number_Obs_data = lapply(list(Monthly_data, Test_data, Annual_data), function(x)dim(x)[1])
+cat("Monthly Data:", Number_Obs_data[[1]])
+cat("Test Data:", Number_Obs_data[[2]])
+cat("Annual Data:", Number_Obs_data[[3]])
+```
+
+
+#Model Inputs and Outputs
+```{r}
+Inputs = c("X__Cows",
+           "Dry_Matter", "CP__" , "Starch___DM", "pH", 
+           "Pur_Feed_Calc", "Feed_Cost__All_Animals__Annual", "Corn_silage")
+
+Outputs = c("Milk_per_Milk_Cow", "X__Fat", "X__Pro",
+            "MUN", "Fecal_Starch")
+```
+
+#Model 4-1 Test Data
+```{r}
+Inputs_Model4 = Inputs[1:5]
+eff_Model41 = data.frame(matrix(NA, ncol = 6, nrow = dim(Test_data)[1]))
+colnames(eff_Model41) = c("Farm_ID", Outputs)
+eff_Model41$Farm_ID = Test_data$Farm_ID
+
+for(a in Outputs){
+  cat("\n\n\n", "Efficiency Scores for", a, "\n")
+  dea_local = dea(data.frame(Test_data[Inputs_Model4]), data.frame(Test_data[a]))
+  eff_Model41[a] = dea_local$eff
+  summary(dea_local)
+}
+
+eff_Model41_ = eff_Model41
+
+eff_Model41 %<>%
+  group_by(Farm_ID)%>%
+  summarise_each(., funs(mean))
+
+kable(eff_Model41, digits = 3, caption = "Average Test Data Efficiency Score by Farm")
+
+eff_Model41_vec = data.frame(eff = numeric(),
+                             output = character())
+for (a in Outputs) {
+  local_df = data.frame(eff_Model41[a])
+  colnames(local_df) = "eff"
+  local_df$output = a
+  local_df = local_df[,c(2,1)] 
+  eff_Model41_vec = rbind(eff_Model41_vec, local_df)
+}
+ggplot(eff_Model41_vec, aes(eff, fill = factor(output))) + 
+  geom_histogram(alpha = 0.8, aes(y = ..density..), position = 'stack')+
+  xlab("Production Efficiency")+
+  ylab("Number of Farms")+
+  ggtitle("Histogram of Production Efficiency by Output")+
+  scale_fill_manual(name='Output', values=c("#0066FF", "#0033CC", "#33FFFF", "#99CC00", "#FFCC66", "#FF9933", "#FF99FF", "#9933FF","#FF0000"))
+
+ggplot(eff_Model41_vec, aes(eff, fill = output)) + 
+  geom_density(alpha = 0.2)
+```
+
+
+
+#Model 4-2 Test Data Seperated
+```{r}
+
+eff_Model42 = data.frame(matrix(NA, ncol = 7, nrow = dim(Test_data)[1]))
+colnames(eff_Model42) = c("Farm_ID", "Season_Year", Outputs)
+eff_Model42$Farm_ID = Test_data$Farm_ID
+eff_Model42$Season_Year = factor(Test_data$Season_Year, c("Fall 2013", "Spring 2014", "Fall 2014", "Spring 2015", "Fall 2015"))
+
+for (a in Outputs){
+  for (t in unique(Test_data$Season_Year)[c(1,2,5,3,4)]){
+    local_data = Test_data[Test_data$Season_Year == t,]
+    local_eff = dea(data.frame(local_data[Inputs_Model4]), data.frame(local_data[a]))$eff
+    eff_Model42[Test_data$Season_Year == t, a] = local_eff
+    }
+  
+    plot_ = ggplot(eff_Model42, aes(x = Season_Year, y = eff_Model42[,a], group = factor(Farm_ID), color = factor(Farm_ID)))+
+      #geom_line()+
+      geom_point()+
+      xlab("Season/Year")+
+      ylab("Production Efficiency")+
+      ggtitle(paste('Histogram of Efficiency Scores of', a))+
+      labs(color = "Farm ID")
+
+    print(plot_)
+  }
+
+
+kable(eff_Model42, digits = 3, caption = "Test Data Efficiency Score over Time")
+```
+
+
+
+#Model 5 Annual Data
+
+```{r}
+for(a in Outputs){
+  cat("\n", "Efficiency Scores for", a, "\n")
+  summary(dea(data.frame(Annual_data[Inputs]), data.frame(Annual_data[a])))
+}
+```
+
+
+
+#New Addition 03/31/2016
+1. Efficiency scores versus variates
+```{r}
+eff_Model41_plot = 
+  eff_Model41_%>%
+  select(., Farm_ID, Milk_per_Milk_Cow)%>%
+  bind_cols(.,Test_data[c("Fecal_Starch", "Starch_Digestibility", "MUN")])
+  
+
+eff_Model41_plot%<>%
+  gather(Variable_type, Variable, Fecal_Starch : MUN)
+
+ggplot(eff_Model41_plot, aes(x = Variable, y = Milk_per_Milk_Cow))+
+  geom_point(color = "#FF0000")+
+  guides(colour=FALSE)+
+  facet_grid(.~Variable_type, scale = "free_x")+
+  xlab("Variates Value")+
+  ylab("Production (Milk per Milk Cow) Efficiency")+
+  ggtitle("Production Efficiency Score versus Variates")
+
+
+eff_Model42_plot = 
+  eff_Model41_%>%
+  select(., Farm_ID, Fecal_Starch)%>%
+  bind_cols(.,Test_data[c("Fecal_Starch", "Starch_Digestibility", "MUN")])
+
+colnames(eff_Model42_plot)[3] =  "Fecal_Starch_"
+
+eff_Model42_plot%<>%
+  gather(Variable_type, Variable, Fecal_Starch_: MUN)
+
+ggplot(eff_Model42_plot, aes(x = Variable, y = Fecal_Starch))+
+  geom_point(color = "#FF9933")+
+  guides(colour=FALSE)+
+  facet_grid(.~Variable_type, scale = "free_x")+
+  xlab("Variates Value")+
+  ylab("Production (Fecal Starch) Efficiency")+
+  ggtitle("Production (Fecal Starch) Efficiency Scores versus Variates")
+```
+
+2. Efficiency scores versus variates for 0-100 cows, 100-275 cows
+```{r, warning=FALSE}
+FarmID_0_100 = 
+Test_data %>%
+  group_by(Farm_ID)%>%
+  summarise_each(., funs(mean))%>%
+  filter(X__Cows <= 100)%>%
+  select(Farm_ID)
+
+FarmID_100_275 = 
+Test_data %>%
+  group_by(Farm_ID)%>%
+  summarise_each(., funs(mean))%>%
+  filter(X__Cows <= 275 & X__Cows > 100)%>%
+  select(Farm_ID)
+
+eff_Model41_0_100_plot = 
+eff_Model41_plot%>%
+  filter(Farm_ID %in% FarmID_0_100$Farm_ID)
+
+
+ggplot(eff_Model41_0_100_plot, aes(x = Variable, y = Milk_per_Milk_Cow))+
+  geom_point(color = "#0066FF")+
+  guides(colour=FALSE)+
+  facet_grid(.~Variable_type, scale = "free_x")+
+  xlab("Variates Value")+
+  ylab("Production (Milk per Milk Cow) Efficiency")+
+  ggtitle("Production Efficiency Score versus Variates (0 - 100 Cows)")
+
+
+eff_Model41_100_275_plot = 
+eff_Model41_plot%>%
+  filter(Farm_ID %in% FarmID_100_275$Farm_ID)
+
+
+ggplot(eff_Model41_100_275_plot, aes(x = Variable, y = Milk_per_Milk_Cow))+
+  geom_point(color = "#99CC00")+
+  guides(colour=FALSE)+
+  facet_grid(.~Variable_type, scale = "free_x")+
+  xlab("Variates Value")+
+  ylab("Production (Milk per Milk Cow) Efficiency")+
+  ggtitle("Production Efficiency Score versus Variates (100-275 Cows)")
+
+```
+
+3. Two Step Tobit
+
+```{r}
+Annual_eff = Annual_data
+for(a in Outputs){
+  Annual_eff%<>%
+    bind_cols(., dea(data.frame(Annual_data[Inputs]), data.frame(Annual_data[a]))["eff"])
+}
+
+colnames(Annual_eff)[61:65] = lapply(Outputs, function(x) paste("eff_", x, sep = ""))
+```
+
+```{r}
+
+tobit_1 = censReg(Annual_eff$eff_Milk_per_Milk_Cow~
+                  Annual_eff$Pur_Feed_Calc+
+                  #Annual_eff$Feed_Cost__All_Animals__Annual+
+                  Annual_eff$Corn_silage+
+                  Annual_eff$Fecal_Starch+
+                  #Annual_eff$pH+
+                  Annual_eff$MUN,
+                  #Annual_eff$Starch___DM,
+                  left = 0, right = 1)
+summary(tobit_1)
+```
+
+The Coefficients are
+```{r}
+coef(tobit_1)
+```
+The marginal effects (∂E[y|x]/∂xj) are
+```{r}
+margEff(tobit_1)
+```
